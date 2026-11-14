@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "团队任务台 API",
-    "version": "1.0.0",
-    "description": "给一个小组看今天有哪些事、谁在做、做到哪了。\n\n- 没有登录，没有权限，所有接口公开访问。\n- 任务固定四个字段：标题、负责人、优先级、状态。\n- 状态流转：待办 `todo` → 进行中 `doing` → 完成 `done`。\n- 时间均为 UTC，ISO 8601 格式，例如 `2026-01-31T09:30:00.123Z`。\n- 所有响应都带 CORS 头，前端可直接跨域调用。"
+    "version": "1.1.0",
+    "description": "给一个小组看今天有哪些事、谁在做、做到哪了。\n\n- 需要登录：除健康检查、注册、登录外，所有接口都要带 `Authorization: Bearer <token>`。\n- 注册、登录、退出、当前用户四个接口组成用户系统；第一个注册的账号自动成为管理员。\n- 任务固定四个业务字段：标题、负责人、优先级、状态，另带创建人 `created_by` / `creator`。\n- 任务台是团队共享的：登录后能看到所有任务；删除只允许创建人或管理员。\n- 状态流转：待办 `todo` → 进行中 `doing` → 完成 `done`。\n- 时间均为 UTC，ISO 8601 格式，例如 `2026-01-31T09:30:00.123Z`。\n- 所有响应都带 CORS 头，前端可直接跨域调用。"
   },
   "servers": [
     {
@@ -17,12 +17,25 @@
   ],
   "tags": [
     {
+      "name": "auth",
+      "description": "注册、登录、退出、当前用户"
+    },
+    {
+      "name": "users",
+      "description": "团队成员"
+    },
+    {
       "name": "tasks",
       "description": "任务读取、新建、改状态"
     },
     {
       "name": "system",
       "description": "健康检查"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
     }
   ],
   "paths": {
@@ -33,7 +46,8 @@
         ],
         "operationId": "health",
         "summary": "健康检查",
-        "description": "确认服务是否在线，部署后可用于探活。",
+        "description": "确认服务是否在线，部署后可用于探活。不需要登录。",
+        "security": [],
         "responses": {
           "200": {
             "description": "服务正常",
@@ -54,6 +68,210 @@
         }
       }
     },
+    "/api/auth/register": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "operationId": "register",
+        "summary": "注册",
+        "description": "创建账号并直接返回登录 token，前端不用再调一次登录。第一个注册的账号自动成为 `admin`，之后注册的都是 `member`。用户名为 3–32 位字母、数字、点、下划线或短横线，不区分大小写唯一；密码至少 8 位。",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterRequest"
+              },
+              "example": {
+                "username": "zhangsan",
+                "password": "secret123",
+                "display_name": "张三"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "注册成功，已登录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "用户名已存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "参数校验失败",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "operationId": "login",
+        "summary": "登录",
+        "description": "账号密码换 token。token 有效期 7 天，请求时放在 `Authorization: Bearer <token>`。",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              },
+              "example": {
+                "username": "zhangsan",
+                "password": "secret123"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "登录成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "账号或密码错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "参数校验失败",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "operationId": "logout",
+        "summary": "退出登录",
+        "description": "注销当前 token，之后再用它请求会返回 401。",
+        "responses": {
+          "204": {
+            "description": "已退出"
+          },
+          "401": {
+            "description": "未登录或 token 已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/me": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "operationId": "currentUser",
+        "summary": "当前登录用户",
+        "description": "前端启动时用它判断登录态是否还在。",
+        "responses": {
+          "200": {
+            "description": "当前用户",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/User"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未登录或 token 已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/users": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "operationId": "listUsers",
+        "summary": "团队成员列表",
+        "description": "给「负责人」下拉框用。需要登录，不返回密码。",
+        "responses": {
+          "200": {
+            "description": "用户列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未登录或 token 已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/tasks": {
       "get": {
         "tags": [
@@ -61,7 +279,7 @@
         ],
         "operationId": "listTasks",
         "summary": "任务列表",
-        "description": "按创建时间倒序返回全部任务，可按状态、负责人过滤。",
+        "description": "按创建时间倒序返回任务，可按状态、负责人、创建人过滤。需要登录。",
         "parameters": [
           {
             "name": "status",
@@ -81,6 +299,21 @@
               "type": "string",
               "example": "张三"
             }
+          },
+          {
+            "name": "mine",
+            "in": "query",
+            "required": false,
+            "description": "只看自己创建的：传 `1` / `true` / `yes`",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1",
+                "true",
+                "yes"
+              ],
+              "example": "1"
+            }
           }
         ],
         "responses": {
@@ -90,6 +323,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/TaskList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未登录或 token 已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -112,7 +355,7 @@
         ],
         "operationId": "createTask",
         "summary": "新建任务",
-        "description": "标题和负责人必填。优先级默认 `medium`，状态默认 `todo`。",
+        "description": "标题和负责人必填。优先级默认 `medium`，状态默认 `todo`。创建人取当前登录用户。",
         "requestBody": {
           "required": true,
           "content": {
@@ -144,6 +387,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未登录或 token 已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -192,6 +445,16 @@
               }
             }
           },
+          "401": {
+            "description": "未登录或 token 已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "404": {
             "description": "任务不存在",
             "content": {
@@ -210,7 +473,7 @@
         ],
         "operationId": "updateTask",
         "summary": "改任务（主要是改状态）",
-        "description": "只传要改的字段。把状态从 `todo` 改成 `doing`，再改成 `done`。字段会先校验再落库，失败时整条不变。",
+        "description": "只传要改的字段。把状态从 `todo` 改成 `doing`，再改成 `done`。字段会先校验再落库，失败时整条不变。团队共享，任何登录用户都能改。",
         "requestBody": {
           "required": true,
           "content": {
@@ -246,6 +509,16 @@
               }
             }
           },
+          "401": {
+            "description": "未登录或 token 已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "404": {
             "description": "任务不存在",
             "content": {
@@ -274,10 +547,30 @@
         ],
         "operationId": "deleteTask",
         "summary": "删除任务",
-        "description": "删除一条任务，主要给联调和清理测试数据用。",
+        "description": "只有创建人或管理员能删；老数据没有创建人，只有管理员能删。",
         "responses": {
           "204": {
             "description": "删除成功"
+          },
+          "401": {
+            "description": "未登录或 token 已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "不是创建人也不是管理员",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           },
           "404": {
             "description": "任务不存在",
@@ -294,7 +587,161 @@
     }
   },
   "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "opaque",
+        "description": "登录或注册返回的 token，请求头写 `Authorization: Bearer <token>`。"
+      }
+    },
     "schemas": {
+      "UserRole": {
+        "type": "string",
+        "description": "角色：`member` 普通成员、`admin` 管理员（第一个注册的账号）",
+        "enum": [
+          "member",
+          "admin"
+        ],
+        "example": "member"
+      },
+      "User": {
+        "type": "object",
+        "required": [
+          "id",
+          "username",
+          "display_name",
+          "role",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "example": 1
+          },
+          "username": {
+            "type": "string",
+            "description": "登录账号，不区分大小写唯一",
+            "example": "zhangsan"
+          },
+          "display_name": {
+            "type": "string",
+            "description": "显示名，默认与用户名相同",
+            "example": "张三"
+          },
+          "role": {
+            "$ref": "#/components/schemas/UserRole"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "注册时间（UTC）",
+            "example": "2026-01-31T09:30:00.123Z"
+          }
+        }
+      },
+      "RegisterRequest": {
+        "type": "object",
+        "required": [
+          "username",
+          "password"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "username": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 32,
+            "pattern": "^[A-Za-z0-9_.-]+$",
+            "description": "登录账号：3–32 位字母、数字、点、下划线或短横线",
+            "example": "zhangsan"
+          },
+          "password": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 128,
+            "format": "password",
+            "description": "密码，至少 8 位",
+            "example": "secret123"
+          },
+          "display_name": {
+            "type": "string",
+            "maxLength": 50,
+            "description": "显示名，不传就用用户名",
+            "example": "张三"
+          }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "required": [
+          "username",
+          "password"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "username": {
+            "type": "string",
+            "example": "zhangsan"
+          },
+          "password": {
+            "type": "string",
+            "format": "password",
+            "example": "secret123"
+          }
+        }
+      },
+      "AuthResponse": {
+        "type": "object",
+        "required": [
+          "token",
+          "token_type",
+          "expires_at",
+          "user"
+        ],
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "登录态 token，存 localStorage，请求时放 Authorization 头",
+            "example": "V1StGXR8_Z5jdHi6B-myT..."
+          },
+          "token_type": {
+            "type": "string",
+            "enum": [
+              "Bearer"
+            ],
+            "example": "Bearer"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "token 过期时间（UTC），过期后重新登录",
+            "example": "2026-02-07T09:30:00.123Z"
+          },
+          "user": {
+            "$ref": "#/components/schemas/User"
+          }
+        }
+      },
+      "UserList": {
+        "type": "object",
+        "required": [
+          "items",
+          "total"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/User"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "example": 3
+          }
+        }
+      },
       "TaskStatus": {
         "type": "string",
         "description": "任务状态：`todo` 待办、`doing` 进行中、`done` 完成",
@@ -323,6 +770,8 @@
           "assignee",
           "priority",
           "status",
+          "created_by",
+          "creator",
           "created_at",
           "updated_at"
         ],
@@ -346,6 +795,18 @@
           },
           "status": {
             "$ref": "#/components/schemas/TaskStatus"
+          },
+          "created_by": {
+            "type": "integer",
+            "nullable": true,
+            "description": "创建人用户 id；加登录之前的老数据为 null",
+            "example": 1
+          },
+          "creator": {
+            "type": "string",
+            "nullable": true,
+            "description": "创建人用户名；加登录之前的老数据为 null",
+            "example": "zhangsan"
           },
           "created_at": {
             "type": "string",
@@ -461,6 +922,9 @@
                 "description": "机器可读的错误码",
                 "enum": [
                   "validation_error",
+                  "unauthorized",
+                  "forbidden",
+                  "username_taken",
                   "not_found",
                   "method_not_allowed",
                   "payload_too_large",

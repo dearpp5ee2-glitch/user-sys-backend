@@ -7,6 +7,7 @@ Standard library only: http.server + sqlite3. Runs on Python 3.6+.
 import argparse
 import json
 import os
+import re
 import signal
 import sys
 import threading
@@ -14,7 +15,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 from urllib.parse import parse_qs, unquote, urlparse
 
-from store import PRIORITIES, STATUSES, TaskStore
+import auth
+from store import PRIORITIES, STATUSES, Store
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
@@ -27,6 +29,14 @@ FRONTEND_DIR = os.path.abspath(
 MAX_BODY_BYTES = 64 * 1024
 TITLE_MAX = 200
 ASSIGNEE_MAX = 50
+
+USERNAME_MIN = 3
+USERNAME_MAX = 32
+USERNAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+PASSWORD_MIN = 8
+PASSWORD_MAX = 128
+DISPLAY_NAME_MAX = 50
+SESSION_TTL_SECONDS = 7 * 24 * 3600
 
 CONTENT_TYPES = {
     ".css": "text/css; charset=utf-8",
@@ -51,6 +61,18 @@ class ValidationError(Exception):
     def __init__(self, fields, message="Request validation failed"):
         Exception.__init__(self, message)
         self.fields = fields
+        self.message = message
+
+
+class Unauthorized(Exception):
+    def __init__(self, message="Authentication required"):
+        Exception.__init__(self, message)
+        self.message = message
+
+
+class Forbidden(Exception):
+    def __init__(self, message="You are not allowed to do that"):
+        Exception.__init__(self, message)
         self.message = message
 
 
@@ -128,15 +150,78 @@ def validate_update(payload):
     return fields
 
 
+def validate_register(payload):
+    if not isinstance(payload, dict):
+        raise ValidationError({}, "JSON body must be an object")
+    unknown = sorted(set(payload) - {"username", "password", "display_name"})
+    if unknown:
+        raise ValidationError(
+            {k: "is not a known field" for k in unknown}, "Unknown fields: " + ", ".join(unknown)
+        )
+    username = _clean_text(payload.get("username"), "username", USERNAME_MAX)
+    if len(username) < USERNAME_MIN:
+        raise ValidationError(
+            {"username": "must be at least %d characters" % USERNAME_MIN}, "Username is too short"
+        )
+    if not USERNAME_RE.match(username):
+        raise ValidationError(
+            {"username": "may only contain letters, digits, dot, dash and underscore"},
+            "Username has invalid characters",
+        )
+    password = payload.get("password")
+    if not isinstance(password, str) or not password:
+        raise ValidationError({"password": "is required"}, "Field is required: password")
+    if len(password) < PASSWORD_MIN:
+        raise ValidationError(
+            {"password": "must be at least %d characters" % PASSWORD_MIN}, "Password is too short"
+        )
+    if len(password) > PASSWORD_MAX:
+        raise ValidationError(
+            {"password": "must be at most %d characters" % PASSWORD_MAX}, "Password is too long"
+        )
+    display_name = _clean_text(payload.get("display_name"), "display_name", DISPLAY_NAME_MAX, required=False)
+    return {
+        "username": username,
+        "password": password,
+        "display_name": display_name or username,
+    }
+
+
+def validate_login(payload):
+    if not isinstance(payload, dict):
+        raise ValidationError({}, "JSON body must be an object")
+    unknown = sorted(set(payload) - {"username", "password"})
+    if unknown:
+        raise ValidationError(
+            {k: "is not a known field" for k in unknown}, "Unknown fields: " + ", ".join(unknown)
+        )
+    username = _clean_text(payload.get("username"), "username", USERNAME_MAX)
+    password = payload.get("password")
+    if not isinstance(password, str) or not password:
+        raise ValidationError({"password": "is required"}, "Field is required: password")
+    return {"username": username, "password": password}
+
+
+def public_user(user):
+    """The user fields safe to hand to a client (never the password hash)."""
+    return {
+        "id": user["id"],
+        "username": user["username"],
+        "display_name": user["display_name"],
+        "role": user["role"],
+        "created_at": user["created_at"],
+    }
+
+
 class TaskHandler(BaseHTTPRequestHandler):
     store = None
-    server_version = "TeamTaskBoard/1.0"
+    server_version = "TeamTaskBoard/1.1"
 
     # ------------------------------------------------------------------ utils
     def _cors_headers(self):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.send_header("Access-Control-Max-Age", "86400")
 
     def _send_json(self, status, payload, extra_headers=None):
@@ -151,11 +236,11 @@ class TaskHandler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
-    def _send_error(self, status, code, message, fields=None):
+    def _send_error(self, status, code, message, fields=None, headers=None):
         payload = {"error": {"code": code, "message": message}}
         if fields:
             payload["error"]["fields"] = fields
-        self._send_json(status, payload)
+        self._send_json(status, payload, headers)
 
     def _read_json(self):
         raw_len = self.headers.get("Content-Length")
@@ -211,20 +296,43 @@ class TaskHandler(BaseHTTPRequestHandler):
                 return self._serve_frontend(path, method)
             if path == "/api/health" and method == "GET":
                 return self._send_json(200, {"status": "ok"})
+            if path == "/api/auth/register":
+                if method == "POST":
+                    return self._register()
+                return self._method_not_allowed("POST")
+            if path == "/api/auth/login":
+                if method == "POST":
+                    return self._login()
+                return self._method_not_allowed("POST")
+            if path == "/api/auth/logout":
+                if method == "POST":
+                    return self._logout()
+                return self._method_not_allowed("POST")
+            if path == "/api/auth/me":
+                if method == "GET":
+                    return self._send_json(200, public_user(self._current_user()))
+                return self._method_not_allowed("GET")
+            if path == "/api/users":
+                if method == "GET":
+                    self._current_user()
+                    users = [public_user(u) for u in self.store.list_users()]
+                    return self._send_json(200, {"items": users, "total": len(users)})
+                return self._method_not_allowed("GET")
             if path == "/api/tasks":
                 if method == "GET":
-                    return self._list_tasks(parsed.query)
+                    return self._list_tasks(parsed.query, self._current_user())
                 if method == "POST":
-                    return self._create_task()
+                    return self._create_task(self._current_user())
                 return self._method_not_allowed("GET, POST")
             if path.startswith("/api/tasks/"):
                 task_id = self._parse_id(path)
+                user = self._current_user()
                 if method == "GET":
                     return self._get_task(task_id)
                 if method == "PATCH":
                     return self._update_task(task_id)
                 if method == "DELETE":
-                    return self._delete_task(task_id)
+                    return self._delete_task(task_id, user)
                 return self._method_not_allowed("GET, PATCH, DELETE")
             if path == "/openapi.json" and method == "GET":
                 return self._send_file(OPENAPI_PATH, "application/json; charset=utf-8")
@@ -237,6 +345,15 @@ class TaskHandler(BaseHTTPRequestHandler):
             return self._serve_frontend(path, method)
         except ValidationError as exc:
             self._send_error(422, "validation_error", exc.message, exc.fields)
+        except Unauthorized as exc:
+            self._send_error(
+                401,
+                "unauthorized",
+                exc.message,
+                headers={"WWW-Authenticate": 'Bearer realm="team-tasks"'},
+            )
+        except Forbidden as exc:
+            self._send_error(403, "forbidden", exc.message)
         except PayloadTooLarge:
             self._send_error(413, "payload_too_large", "JSON body must be under 64 KB")
         except BrokenPipeError:
@@ -264,21 +381,95 @@ class TaskHandler(BaseHTTPRequestHandler):
             raise ValidationError({}, "Task id must be a positive integer")
         return task_id
 
+    # ------------------------------------------------------------------ auth
+    def _bearer_token(self):
+        header = self.headers.get("Authorization", "")
+        parts = header.split()
+        if len(parts) != 2 or parts[0].lower() != "bearer" or not parts[1]:
+            raise Unauthorized("Send Authorization: Bearer <token>")
+        return parts[1]
+
+    def _current_user(self):
+        user = self.store.user_for_token(auth.token_hash(self._bearer_token()))
+        if user is None:
+            raise Unauthorized("Token is invalid or expired")
+        return user
+
+    def _issue_session(self, user, status=200):
+        token = auth.new_token()
+        expires_at = self.store.create_session(
+            auth.token_hash(token), user["id"], SESSION_TTL_SECONDS
+        )
+        self._send_json(
+            status,
+            {
+                "token": token,
+                "token_type": "Bearer",
+                "expires_at": expires_at,
+                "user": public_user(user),
+            },
+        )
+
+    def _register(self):
+        fields = validate_register(self._read_json())
+        user = self.store.register_user(
+            fields["username"],
+            auth.hash_password(fields["password"]),
+            fields["display_name"],
+        )
+        if user is None:
+            return self._send_error(
+                409,
+                "username_taken",
+                "That username is already registered",
+                {"username": "is already taken"},
+            )
+        # Registering signs you in, so the frontend does not need a second call.
+        self._issue_session(user, status=201)
+
+    def _login(self):
+        fields = validate_login(self._read_json())
+        user = self.store.get_user_by_username(fields["username"])
+        if user is None:
+            auth.verify_password(fields["password"], auth.DUMMY_HASH)
+            raise Unauthorized("Wrong username or password")
+        if not auth.verify_password(fields["password"], user["password_hash"]):
+            raise Unauthorized("Wrong username or password")
+        self._issue_session(user)
+
+    def _logout(self):
+        token = self._bearer_token()
+        self._current_user()
+        self.store.delete_session(auth.token_hash(token))
+        self.send_response(204)
+        self._cors_headers()
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     # ------------------------------------------------------------------- api
-    def _list_tasks(self, query):
+    def _list_tasks(self, query, user):
         params = parse_qs(query)
         status = params.get("status", [None])[0]
         assignee = params.get("assignee", [None])[0]
+        mine = params.get("mine", [None])[0]
         if status and status not in STATUSES:
             raise ValidationError(
                 {"status": "must be one of: " + ", ".join(STATUSES)}, "Invalid status filter"
             )
-        items = self.store.list(status=status, assignee=assignee)
+        if mine is not None and mine.lower() not in ("1", "true", "yes"):
+            raise ValidationError(
+                {"mine": "must be one of: 1, true, yes"}, "Invalid mine filter"
+            )
+        items = self.store.list(
+            status=status,
+            assignee=assignee,
+            mine=user["id"] if mine else None,
+        )
         self._send_json(200, {"items": items, "total": len(items)})
 
-    def _create_task(self):
+    def _create_task(self, user):
         fields = validate_create(self._read_json())
-        task = self.store.create(**fields)
+        task = self.store.create(created_by=user["id"], **fields)
         self._send_json(201, task, {"Location": "/api/tasks/%d" % task["id"]})
 
     def _get_task(self, task_id):
@@ -294,7 +485,14 @@ class TaskHandler(BaseHTTPRequestHandler):
             return self._send_error(404, "not_found", "Task %d does not exist" % task_id)
         self._send_json(200, task)
 
-    def _delete_task(self, task_id):
+    def _delete_task(self, task_id, user):
+        task = self.store.get(task_id)
+        if task is None:
+            return self._send_error(404, "not_found", "Task %d does not exist" % task_id)
+        # The board is shared, but a task can only be removed by its creator or
+        # an admin. Tasks from before logins existed have no creator.
+        if user["role"] != "admin" and task["created_by"] != user["id"]:
+            raise Forbidden("Only the creator or an admin can delete this task")
         if not self.store.delete(task_id):
             return self._send_error(404, "not_found", "Task %d does not exist" % task_id)
         self.send_response(204)
@@ -391,7 +589,7 @@ def main(argv=None):
     )
     args = parser.parse_args(argv)
 
-    TaskHandler.store = TaskStore(args.db)
+    TaskHandler.store = Store(args.db)
     httpd = ThreadingHTTPServer((args.host, args.port), TaskHandler)
 
     def shutdown(signum, frame):
