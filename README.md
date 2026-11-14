@@ -48,7 +48,7 @@ python3 app.py --port 9000 --db /tmp/tasks.db
 python3 -m unittest discover -s tests -v
 ```
 
-14 个用例覆盖新建、校验、状态流转、过滤、删除、CORS、Swagger 静态资源。
+15 个用例覆盖新建、校验、状态流转、过滤、删除、CORS、Swagger 静态资源、前端静态托管。
 
 ## 部署
 
