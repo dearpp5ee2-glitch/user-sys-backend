@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>团队任务台 API - Swagger UI</title>
+  <link rel="icon" type="image/png" href="/static/swagger-ui/favicon-32x32.png" />
+  <link rel="stylesheet" href="/static/swagger-ui/swagger-ui.css" />
+  <style>
+    body { margin: 0; background: #fafafa; }
+    .topbar { display: none; }
+  </style>
+</head>
+<body>
+  <div id="swagger-ui"></div>
+  <script src="/static/swagger-ui/swagger-ui-bundle.js"></script>
+  <script src="/static/swagger-ui/swagger-ui-standalone-preset.js"></script>
+  <script>
+    window.onload = function () {
+      window.ui = SwaggerUIBundle({
+        url: "/openapi.json",
+        dom_id: "#swagger-ui",
+        deepLinking: true,
+        presets: [SwaggerUIBundle.presets.apis, SwaggerUIStandalonePreset],
+        layout: "BaseLayout",
+        defaultModelsExpandDepth: 1,
+        defaultModelExpandDepth: 1,
+        tryItOutEnabled: true,
+        requestInterceptor: function (req) {
+          // Same-origin calls; keep it explicit so the "Try it out" button works
+          // no matter which host name the docs page was opened with.
+          return req;
+        }
+      });
+    };
+  </script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+[Unit]
+Description=Team Task Board API
+After=network.target
+
+[Service]
+Type=simple
+User=teamtasks
+Group=teamtasks
+WorkingDirectory=/opt/team-tasks-backend
+Environment=HOST=0.0.0.0
+Environment=PORT=8080
+Environment=DB_PATH=/var/lib/team-tasks/tasks.db
+ExecStart=/usr/bin/python3 /opt/team-tasks-backend/app.py
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/team-tasks
+
+[Install]
+WantedBy=multi-user.target

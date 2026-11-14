@@ -1,0 +1,492 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "团队任务台 API",
+    "version": "1.0.0",
+    "description": "给一个小组看今天有哪些事、谁在做、做到哪了。\n\n- 没有登录，没有权限，所有接口公开访问。\n- 任务固定四个字段：标题、负责人、优先级、状态。\n- 状态流转：待办 `todo` → 进行中 `doing` → 完成 `done`。\n- 时间均为 UTC，ISO 8601 格式，例如 `2026-01-31T09:30:00.123Z`。\n- 所有响应都带 CORS 头，前端可直接跨域调用。"
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "当前部署实例"
+    },
+    {
+      "url": "http://47.108.60.176:8080",
+      "description": "测试环境"
+    }
+  ],
+  "tags": [
+    {
+      "name": "tasks",
+      "description": "任务读取、新建、改状态"
+    },
+    {
+      "name": "system",
+      "description": "健康检查"
+    }
+  ],
+  "paths": {
+    "/api/health": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "operationId": "health",
+        "summary": "健康检查",
+        "description": "确认服务是否在线，部署后可用于探活。",
+        "responses": {
+          "200": {
+            "description": "服务正常",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "ok"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "operationId": "listTasks",
+        "summary": "任务列表",
+        "description": "按创建时间倒序返回全部任务，可按状态、负责人过滤。",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "只看某个状态",
+            "schema": {
+              "$ref": "#/components/schemas/TaskStatus"
+            }
+          },
+          {
+            "name": "assignee",
+            "in": "query",
+            "required": false,
+            "description": "只看某个负责人（精确匹配）",
+            "schema": {
+              "type": "string",
+              "example": "张三"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "任务列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskList"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "过滤参数不合法",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "operationId": "createTask",
+        "summary": "新建任务",
+        "description": "标题和负责人必填。优先级默认 `medium`，状态默认 `todo`。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskCreate"
+              },
+              "example": {
+                "title": "把登录页的联调做完",
+                "assignee": "张三",
+                "priority": "high"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "创建成功",
+            "headers": {
+              "Location": {
+                "description": "新任务的地址",
+                "schema": {
+                  "type": "string",
+                  "example": "/api/tasks/1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "参数校验失败",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/{taskId}": {
+      "parameters": [
+        {
+          "name": "taskId",
+          "in": "path",
+          "required": true,
+          "description": "任务 id",
+          "schema": {
+            "type": "integer",
+            "minimum": 1,
+            "example": 1
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "operationId": "getTask",
+        "summary": "任务详情",
+        "responses": {
+          "200": {
+            "description": "任务详情",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "任务不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "tasks"
+        ],
+        "operationId": "updateTask",
+        "summary": "改任务（主要是改状态）",
+        "description": "只传要改的字段。把状态从 `todo` 改成 `doing`，再改成 `done`。字段会先校验再落库，失败时整条不变。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskUpdate"
+              },
+              "examples": {
+                "startWork": {
+                  "summary": "开始做",
+                  "value": {
+                    "status": "doing"
+                  }
+                },
+                "finish": {
+                  "summary": "标记完成",
+                  "value": {
+                    "status": "done"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "更新后的任务",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "任务不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "参数校验失败",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "tasks"
+        ],
+        "operationId": "deleteTask",
+        "summary": "删除任务",
+        "description": "删除一条任务，主要给联调和清理测试数据用。",
+        "responses": {
+          "204": {
+            "description": "删除成功"
+          },
+          "404": {
+            "description": "任务不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "TaskStatus": {
+        "type": "string",
+        "description": "任务状态：`todo` 待办、`doing` 进行中、`done` 完成",
+        "enum": [
+          "todo",
+          "doing",
+          "done"
+        ],
+        "example": "todo"
+      },
+      "TaskPriority": {
+        "type": "string",
+        "description": "优先级：`low` 低、`medium` 中、`high` 高",
+        "enum": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "example": "medium"
+      },
+      "Task": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "assignee",
+          "priority",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "example": 1
+          },
+          "title": {
+            "type": "string",
+            "description": "标题",
+            "example": "把登录页的联调做完"
+          },
+          "assignee": {
+            "type": "string",
+            "description": "负责人",
+            "example": "张三"
+          },
+          "priority": {
+            "$ref": "#/components/schemas/TaskPriority"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TaskStatus"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "创建时间（UTC）",
+            "example": "2026-01-31T09:30:00.123Z"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "最后更新时间（UTC）",
+            "example": "2026-01-31T10:00:05.456Z"
+          }
+        }
+      },
+      "TaskCreate": {
+        "type": "object",
+        "required": [
+          "title",
+          "assignee"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "标题，去首尾空格后不能为空",
+            "example": "把登录页的联调做完"
+          },
+          "assignee": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 50,
+            "description": "负责人，去首尾空格后不能为空",
+            "example": "张三"
+          },
+          "priority": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TaskPriority"
+              }
+            ],
+            "default": "medium"
+          },
+          "status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TaskStatus"
+              }
+            ],
+            "default": "todo"
+          }
+        }
+      },
+      "TaskUpdate": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "assignee": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 50
+          },
+          "priority": {
+            "$ref": "#/components/schemas/TaskPriority"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TaskStatus"
+          }
+        }
+      },
+      "TaskList": {
+        "type": "object",
+        "required": [
+          "items",
+          "total"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Task"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "example": 3
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "机器可读的错误码",
+                "enum": [
+                  "validation_error",
+                  "not_found",
+                  "method_not_allowed",
+                  "payload_too_large",
+                  "internal_error"
+                ],
+                "example": "validation_error"
+              },
+              "message": {
+                "type": "string",
+                "description": "给人看的错误说明",
+                "example": "Request validation failed"
+              },
+              "fields": {
+                "type": "object",
+                "description": "按字段说明哪里不合法",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "example": {
+                  "title": "must not be empty"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
