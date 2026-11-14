@@ -52,7 +52,7 @@ python3 -m unittest discover -s tests -v
 
 ## 部署
 
-测试环境：`root@47.108.60.176:22`，服务端口 `8080`。
+测试环境：`root@47.108.60.176:22`，公网入口 `http://47.108.60.176`（systemd 服务实际监听 80，云端安全组只放行了 80）。
 
 ```bash
 bash deploy/deploy-remote.sh                 # 默认推 root@47.108.60.176
@@ -72,8 +72,8 @@ journalctl -u team-tasks -f
 
 ## 前端接入
 
-- API 根地址：`http://47.108.60.176:8080`
-- Swagger 文档：<http://47.108.60.176:8080/docs>
+- API 根地址：`http://47.108.60.176`
+- Swagger 文档：<http://47.108.60.176/docs>
 - 所有响应带 `Access-Control-Allow-Origin: *`，允许 `GET, POST, PATCH, DELETE, OPTIONS`，前端直接跨域调用即可，不用代理。
 - 列表返回 `{"items": [...], "total": n}`，新建返回 201 加整条任务，改状态返回 200 加改后的整条任务。
 - 建议前端状态映射：`todo` 待办、`doing` 进行中、`done` 完成；优先级 `low` 低、`medium` 中、`high` 高。
@@ -82,13 +82,13 @@ journalctl -u team-tasks -f
 ### 示例
 
 ```bash
-curl -s http://47.108.60.176:8080/api/tasks
+curl -s http://47.108.60.176/api/tasks
 
-curl -s -X POST http://47.108.60.176:8080/api/tasks \
+curl -s -X POST http://47.108.60.176/api/tasks \
   -H 'Content-Type: application/json' \
   -d '{"title":"把登录页的联调做完","assignee":"张三","priority":"high"}'
 
-curl -s -X PATCH http://47.108.60.176:8080/api/tasks/1 \
+curl -s -X PATCH http://47.108.60.176/api/tasks/1 \
   -H 'Content-Type: application/json' \
   -d '{"status":"doing"}'
 ```

@@ -6,7 +6,7 @@ set -euo pipefail
 APP_DIR=/opt/team-tasks-backend
 DATA_DIR=/var/lib/team-tasks
 SERVICE=team-tasks
-PORT=${PORT:-8080}
+PORT=${PORT:-80}
 
 cd "$(dirname "$0")/.."
 
