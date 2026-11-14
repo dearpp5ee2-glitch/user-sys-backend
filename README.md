@@ -77,6 +77,7 @@ journalctl -u team-tasks -f
 - 服务器目录：`/var/www/team-tasks`，放 `index.html`、`styles.css`、`app.js`
 - 打开 <http://47.108.60.176> 就是任务台；`/docs`、`/openapi.json`、`/api/*` 不受影响
 - 更新前端直接替换目录里的文件，不用重启服务
+- 从仓库同步：`bash deploy/deploy-frontend.sh`（默认拉 `pp5ee/user-sys-frontend` 的三个文件）
 - 本地同样效果：`FRONTEND_DIR=./frontend python3 app.py`
 
 ## 前端接入
