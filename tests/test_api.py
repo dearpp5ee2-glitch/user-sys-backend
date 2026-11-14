@@ -23,6 +23,13 @@ class ApiTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmpdir = tempfile.mkdtemp(prefix="taskboard-test-")
+        cls.frontend_dir = os.path.join(cls.tmpdir, "frontend")
+        os.makedirs(cls.frontend_dir)
+        with open(os.path.join(cls.frontend_dir, "index.html"), "w") as handle:
+            handle.write("<!doctype html><title>taskboard</title>")
+        with open(os.path.join(cls.frontend_dir, "styles.css"), "w") as handle:
+            handle.write("body { color: #333; }")
+        app.FRONTEND_DIR = cls.frontend_dir
         app.TaskHandler.store = TaskStore(os.path.join(cls.tmpdir, "tasks.db"))
         cls.httpd = app.ThreadingHTTPServer(("127.0.0.1", 0), app.TaskHandler)
         cls.base = "http://127.0.0.1:%d" % cls.httpd.server_address[1]
@@ -204,6 +211,31 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(status, 404)
         status, _, data = self.json_request("PUT", "/api/tasks")
         self.assertEqual(status, 405)
+
+    def test_frontend_serving(self):
+        status, headers, body = self.request("GET", "/")
+        self.assertEqual(status, 200)
+        self.assertIn("text/html", headers["Content-Type"])
+        self.assertIn(b"taskboard", body)
+
+        status, headers, body = self.request("GET", "/styles.css")
+        self.assertEqual(status, 200)
+        self.assertIn("text/css", headers["Content-Type"])
+        self.assertIn(b"color", body)
+
+        # An unknown extension-less route falls back to the SPA entry point.
+        status, headers, body = self.request("GET", "/some/route")
+        self.assertEqual(status, 200)
+        self.assertIn(b"taskboard", body)
+
+        status, _, data = self.json_request("GET", "/missing.png")
+        self.assertEqual(status, 404)
+        self.assertEqual(data["error"]["code"], "not_found")
+
+        # API paths never fall through to the SPA.
+        status, _, data = self.json_request("GET", "/api/unknown")
+        self.assertEqual(status, 404)
+        self.assertEqual(data["error"]["code"], "not_found")
 
     def test_swagger_assets(self):
         status, _, spec = self.json_request("GET", "/openapi.json")

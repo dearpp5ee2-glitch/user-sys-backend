@@ -19,6 +19,10 @@ from store import PRIORITIES, STATUSES, TaskStore
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 OPENAPI_PATH = os.path.join(BASE_DIR, "openapi.json")
+# Static frontend build (index.html, styles.css, app.js). Served at "/".
+FRONTEND_DIR = os.path.abspath(
+    os.environ.get("FRONTEND_DIR", os.path.join(BASE_DIR, "frontend"))
+)
 
 MAX_BODY_BYTES = 64 * 1024
 TITLE_MAX = 200
@@ -28,6 +32,16 @@ CONTENT_TYPES = {
     ".css": "text/css; charset=utf-8",
     ".js": "application/javascript; charset=utf-8",
     ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".svg": "image/svg+xml",
+    ".ico": "image/x-icon",
+    ".webp": "image/webp",
+    ".woff": "font/woff",
+    ".woff2": "font/woff2",
+    ".map": "application/json; charset=utf-8",
+    ".txt": "text/plain; charset=utf-8",
     ".html": "text/html; charset=utf-8",
     ".json": "application/json; charset=utf-8",
 }
@@ -194,15 +208,7 @@ class TaskHandler(BaseHTTPRequestHandler):
             path = path.rstrip("/")
         try:
             if path == "/":
-                return self._send_json(
-                    200,
-                    {
-                        "name": "Team Task Board API",
-                        "version": "1.0.0",
-                        "docs": "/docs",
-                        "openapi": "/openapi.json",
-                    },
-                )
+                return self._serve_frontend(path, method)
             if path == "/api/health" and method == "GET":
                 return self._send_json(200, {"status": "ok"})
             if path == "/api/tasks":
@@ -228,7 +234,7 @@ class TaskHandler(BaseHTTPRequestHandler):
                 )
             if path.startswith("/static/"):
                 return self._serve_static(path, method)
-            return self._send_error(404, "not_found", "No route for %s" % path)
+            return self._serve_frontend(path, method)
         except ValidationError as exc:
             self._send_error(422, "validation_error", exc.message, exc.fields)
         except PayloadTooLarge:
@@ -310,6 +316,41 @@ class TaskHandler(BaseHTTPRequestHandler):
             CONTENT_TYPES.get(ext, "application/octet-stream"),
             cache="public, max-age=86400",
         )
+
+    def _serve_frontend(self, path, method):
+        """Serve the static frontend at "/", falling back to index.html for routes."""
+        if method not in ("GET", "HEAD"):
+            return self._method_not_allowed("GET")
+        if path.startswith("/api/"):
+            return self._send_error(404, "not_found", "No route for %s" % path)
+
+        index_path = os.path.join(FRONTEND_DIR, "index.html")
+        if path == "/":
+            if os.path.isfile(index_path):
+                return self._send_file(index_path, CONTENT_TYPES[".html"], cache="no-cache")
+            return self._send_json(
+                200,
+                {
+                    "name": "Team Task Board API",
+                    "version": "1.0.0",
+                    "docs": "/docs",
+                    "openapi": "/openapi.json",
+                    "frontend": "not deployed (set FRONTEND_DIR)",
+                },
+            )
+
+        rel = path.lstrip("/")
+        full = os.path.normpath(os.path.join(FRONTEND_DIR, rel))
+        if full.startswith(FRONTEND_DIR + os.sep) and os.path.isfile(full):
+            ext = os.path.splitext(full)[1].lower()
+            return self._send_file(
+                full, CONTENT_TYPES.get(ext, "application/octet-stream"), cache="no-cache"
+            )
+
+        # Unknown path without a file extension: hand it to the SPA.
+        if not os.path.splitext(path)[1] and os.path.isfile(index_path):
+            return self._send_file(index_path, CONTENT_TYPES[".html"], cache="no-cache")
+        return self._send_error(404, "not_found", "Not found: %s" % path)
 
     def _send_file(self, full_path, content_type, cache=None):
         if not os.path.isfile(full_path):

@@ -70,6 +70,15 @@ systemctl restart team-tasks
 journalctl -u team-tasks -f
 ```
 
+## 前端静态托管
+
+后端顺带把前端静态文件挂在同一个 80 端口的根路径，前端同源调 `/api`，不需要反向代理：
+
+- 服务器目录：`/var/www/team-tasks`，放 `index.html`、`styles.css`、`app.js`
+- 打开 <http://47.108.60.176> 就是任务台；`/docs`、`/openapi.json`、`/api/*` 不受影响
+- 更新前端直接替换目录里的文件，不用重启服务
+- 本地同样效果：`FRONTEND_DIR=./frontend python3 app.py`
+
 ## 前端接入
 
 - API 根地址：`http://47.108.60.176`

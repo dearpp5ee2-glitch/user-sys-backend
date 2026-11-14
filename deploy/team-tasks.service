@@ -10,6 +10,7 @@ WorkingDirectory=/opt/team-tasks-backend
 Environment=HOST=0.0.0.0
 Environment=PORT=80
 Environment=DB_PATH=/var/lib/team-tasks/tasks.db
+Environment=FRONTEND_DIR=/var/www/team-tasks
 ExecStart=/usr/bin/python3 /opt/team-tasks-backend/app.py
 Restart=always
 RestartSec=3
