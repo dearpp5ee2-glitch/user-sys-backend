@@ -11,6 +11,7 @@ import tempfile
 import threading
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 
@@ -279,6 +280,7 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(task["status"], "todo")
         self.assertEqual(task["priority"], "medium")
         self.assertEqual(task["title"], "写联调文档")
+        self.assertIsNone(task["note"])
         self.assertEqual(task["created_by"], self.user["id"])
         self.assertEqual(task["creator"], ADMIN_USERNAME)
         self.assertEqual(headers["Location"], "/api/tasks/%d" % task["id"])
@@ -297,6 +299,20 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(task["priority"], "high")
         self.assertEqual(task["status"], "doing")
 
+    def test_note_is_trimmed_and_blank_note_becomes_null(self):
+        status, _, task = self.json_request(
+            "POST",
+            "/api/tasks",
+            {"title": "联调", "note": "  兼容旧会话  ", "assignee": "王五"},
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(task["note"], "兼容旧会话")
+        status, _, task = self.json_request(
+            "PATCH", "/api/tasks/%d" % task["id"], {"note": "   "}
+        )
+        self.assertEqual(status, 200)
+        self.assertIsNone(task["note"])
+
     def test_create_validation(self):
         cases = [
             ({"assignee": "张三"}, "title"),
@@ -306,6 +322,7 @@ class ApiTestCase(unittest.TestCase):
             ({"title": "x", "assignee": "y", "status": "blocked"}, "status"),
             ({"title": "x", "assignee": "y", "extra": 1}, "extra"),
             ({"title": "x" * 201, "assignee": "y"}, "title"),
+            ({"title": "x", "assignee": "y", "note": "n" * 201}, "note"),
         ]
         for body, field in cases:
             status, _, data = self.json_request("POST", "/api/tasks", body)
@@ -375,6 +392,22 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(status, 422)
         status, _, data = self.json_request("GET", "/api/tasks?mine=maybe")
         self.assertEqual(status, 422)
+
+    def test_q_searches_title_note_assignee_and_creator(self):
+        self.json_request(
+            "POST",
+            "/api/tasks",
+            {"title": "发布首页", "note": "兼容旧会话", "assignee": "老周"},
+        )
+        for query in ("发布", "旧会话", "老周", ADMIN_USERNAME.upper()):
+            _, _, data = self.json_request(
+                "GET", "/api/tasks?q=" + urllib.parse.quote(query)
+            )
+            self.assertEqual(data["total"], 1, query)
+        _, _, data = self.json_request(
+            "GET", "/api/tasks?q=" + urllib.parse.quote("不存在")
+        )
+        self.assertEqual(data["total"], 0)
 
     def test_shared_board_and_mine_filter(self):
         username, _, registered = self.register()

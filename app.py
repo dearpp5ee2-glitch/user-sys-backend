@@ -29,6 +29,7 @@ FRONTEND_DIR = os.path.abspath(
 MAX_BODY_BYTES = 64 * 1024
 TITLE_MAX = 200
 ASSIGNEE_MAX = 50
+NOTE_MAX = 200
 
 USERNAME_MIN = 3
 USERNAME_MAX = 32
@@ -97,13 +98,15 @@ def _clean_text(value, field, max_len, required=True):
 def validate_create(payload):
     if not isinstance(payload, dict):
         raise ValidationError({}, "JSON body must be an object")
-    unknown = sorted(set(payload) - {"title", "assignee", "priority", "status"})
+    unknown = sorted(set(payload) - {"title", "note", "assignee", "priority", "status"})
     if unknown:
         raise ValidationError(
             {k: "is not a known field" for k in unknown}, "Unknown fields: " + ", ".join(unknown)
         )
     fields = {}
     fields["title"] = _clean_text(payload.get("title"), "title", TITLE_MAX)
+    note = _clean_text(payload.get("note"), "note", NOTE_MAX, required=False)
+    fields["note"] = note or None
     fields["assignee"] = _clean_text(payload.get("assignee"), "assignee", ASSIGNEE_MAX)
     priority = payload.get("priority", "medium")
     if priority not in PRIORITIES:
@@ -123,7 +126,7 @@ def validate_create(payload):
 def validate_update(payload):
     if not isinstance(payload, dict):
         raise ValidationError({}, "JSON body must be an object")
-    unknown = sorted(set(payload) - {"title", "assignee", "priority", "status"})
+    unknown = sorted(set(payload) - {"title", "note", "assignee", "priority", "status"})
     if unknown:
         raise ValidationError(
             {k: "is not a known field" for k in unknown}, "Unknown fields: " + ", ".join(unknown)
@@ -133,6 +136,9 @@ def validate_update(payload):
     fields = {}
     if "title" in payload:
         fields["title"] = _clean_text(payload["title"], "title", TITLE_MAX)
+    if "note" in payload:
+        note = _clean_text(payload["note"], "note", NOTE_MAX, required=False)
+        fields["note"] = note or None
     if "assignee" in payload:
         fields["assignee"] = _clean_text(payload["assignee"], "assignee", ASSIGNEE_MAX)
     if "priority" in payload:
@@ -452,6 +458,7 @@ class TaskHandler(BaseHTTPRequestHandler):
         status = params.get("status", [None])[0]
         assignee = params.get("assignee", [None])[0]
         mine = params.get("mine", [None])[0]
+        q = params.get("q", [None])[0]
         if status and status not in STATUSES:
             raise ValidationError(
                 {"status": "must be one of: " + ", ".join(STATUSES)}, "Invalid status filter"
@@ -464,6 +471,7 @@ class TaskHandler(BaseHTTPRequestHandler):
             status=status,
             assignee=assignee,
             mine=user["id"] if mine else None,
+            q=q.strip() if q else None,
         )
         self._send_json(200, {"items": items, "total": len(items)})
 

@@ -13,6 +13,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS tasks (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     title      TEXT NOT NULL,
+    note       TEXT,
     assignee   TEXT NOT NULL,
     priority   TEXT NOT NULL DEFAULT 'medium',
     status     TEXT NOT NULL DEFAULT 'todo',
@@ -45,6 +46,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
 # Tasks gained an owner when logins arrived. Rows created before that keep a
 # NULL created_by and stay readable by the whole team.
 TASK_OWNER_COLUMN = "created_by"
+TASK_NOTE_COLUMN = "note"
 
 
 def now_iso():
@@ -82,6 +84,8 @@ class Store(object):
         columns = [row["name"] for row in conn.execute("PRAGMA table_info(tasks)")]
         if TASK_OWNER_COLUMN not in columns:
             conn.execute("ALTER TABLE tasks ADD COLUMN created_by INTEGER")
+        if TASK_NOTE_COLUMN not in columns:
+            conn.execute("ALTER TABLE tasks ADD COLUMN note TEXT")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_tasks_created_by ON tasks(created_by)"
         )
@@ -246,7 +250,7 @@ class Store(object):
             " LEFT JOIN users u ON u.id = t.created_by"
         )
 
-    def list(self, status=None, assignee=None, mine=None):
+    def list(self, status=None, assignee=None, mine=None, q=None):
         sql = self._task_select()
         clauses = []
         params = []
@@ -259,6 +263,13 @@ class Store(object):
         if mine is not None:
             clauses.append("t.created_by = ?")
             params.append(mine)
+        if q:
+            clauses.append(
+                "(lower(t.title) LIKE ? OR lower(COALESCE(t.note, '')) LIKE ?"
+                " OR lower(t.assignee) LIKE ? OR lower(COALESCE(u.username, '')) LIKE ?)"
+            )
+            match = "%%%s%%" % q.lower()
+            params.extend([match, match, match, match])
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
         sql += " ORDER BY t.created_at DESC, t.id DESC"
@@ -279,16 +290,16 @@ class Store(object):
         finally:
             conn.close()
 
-    def create(self, title, assignee, priority="medium", status="todo", created_by=None):
+    def create(self, title, assignee, priority="medium", status="todo", created_by=None, note=None):
         stamp = now_iso()
         with self._write_lock:
             conn = self._connect()
             try:
                 cur = conn.execute(
                     "INSERT INTO tasks"
-                    " (title, assignee, priority, status, created_by, created_at, updated_at)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (title, assignee, priority, status, created_by, stamp, stamp),
+                    " (title, note, assignee, priority, status, created_by, created_at, updated_at)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (title, note, assignee, priority, status, created_by, stamp, stamp),
                 )
                 conn.commit()
                 return self._row(
@@ -301,7 +312,7 @@ class Store(object):
 
     def update(self, task_id, fields):
         """Patch the given columns. Returns the row, or None when it does not exist."""
-        allowed = ("title", "assignee", "priority", "status")
+        allowed = ("title", "note", "assignee", "priority", "status")
         changes = [(k, fields[k]) for k in allowed if k in fields]
         with self._write_lock:
             conn = self._connect()

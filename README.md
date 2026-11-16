@@ -20,7 +20,7 @@
 | POST | `/api/auth/logout` | 退出，注销当前 token | 是 |
 | GET | `/api/auth/me` | 当前登录用户（判断登录态） | 是 |
 | GET | `/api/users` | 团队成员列表（负责人下拉框） | 是 |
-| GET | `/api/tasks` | 任务列表，支持 `?status=`、`?assignee=`、`?mine=1` | 是 |
+| GET | `/api/tasks` | 任务列表，支持状态、负责人、我的任务和 `?q=` 关键词搜索 | 是 |
 | POST | `/api/tasks` | 新建任务 | 是 |
 | GET | `/api/tasks/{id}` | 任务详情 | 是 |
 | PATCH | `/api/tasks/{id}` | 改任务（主要用来改状态） | 是 |
@@ -41,11 +41,12 @@
 - **角色**：第一个注册的账号自动是 `admin`，之后注册的都是 `member`。
 - 密码用 PBKDF2-HMAC-SHA256（260,000 轮、随机盐）存哈希；token 只存 SHA-256，库里拿不到明文。
 
-任务数据业务字段还是四个，两边对齐这一份：
+任务数据业务字段两边对齐这一份：
 
 | 字段 | 类型 | 取值 | 说明 |
 | --- | --- | --- | --- |
 | `title` | string | 1–200 字符 | 标题，必填 |
+| `note` | string / null | 最多 200 字符 | 可选备注，纯空白按 `null` 处理 |
 | `assignee` | string | 1–50 字符 | 负责人，必填 |
 | `priority` | string | `low` / `medium` / `high` | 优先级，默认 `medium` |
 | `status` | string | `todo` / `doing` / `done` | 待办 / 进行中 / 完成，默认 `todo` |
@@ -70,7 +71,7 @@ python3 app.py --port 9000 --db /tmp/tasks.db
 python3 -m unittest discover -s tests -v
 ```
 
-24 个用例覆盖注册/登录/退出/失效 token、鉴权与删除权限、任务新建、校验、状态流转、过滤、CORS、
+用例覆盖注册/登录/退出/失效 token、鉴权与删除权限、任务新建、备注、关键词搜索、状态流转、过滤、CORS、
 Swagger 静态资源、前端静态托管。
 
 ## 部署

@@ -314,6 +314,15 @@
               ],
               "example": "1"
             }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "关键词匹配标题、备注、负责人或创建人",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -819,6 +828,12 @@
             "format": "date-time",
             "description": "最后更新时间（UTC）",
             "example": "2026-01-31T10:00:05.456Z"
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 200,
+            "nullable": true,
+            "description": "可选备注；空白按 null 处理"
           }
         }
       },
@@ -859,6 +874,12 @@
               }
             ],
             "default": "todo"
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 200,
+            "nullable": true,
+            "description": "可选备注；空白按 null 处理"
           }
         }
       },
@@ -882,6 +903,12 @@
           },
           "status": {
             "$ref": "#/components/schemas/TaskStatus"
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 200,
+            "nullable": true,
+            "description": "可选备注；空白按 null 处理"
           }
         }
       },
